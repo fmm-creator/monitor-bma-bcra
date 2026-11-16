@@ -13,22 +13,33 @@ permissions:
 jobs:
   actualizar-bma:
     runs-on: ubuntu-latest
-    container:
-      image: rocker/tidyverse:latest
     steps:
       - name: Descargar repositorio
         uses: actions/checkout@v4
 
-      - name: Instalar Chrome y paquete gt
-        run: |
-          apt-get update && apt-get install -y chromium
-          Rscript -e 'install.packages(c("gt", "webshot2"), repos = "https://cloud.r-project.org")'
+      - name: Configurar R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - name: Instalar paquetes de R (con caché automático)
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::gt
+            any::webshot2
+            any::scales
+            any::lubridate
+            any::httr
+            any::readxl
+            any::tidyverse
+            any::stringr
+            any::readr
 
       - name: Ejecutar monitor y enviar alerta
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          CHROMOTE_CHROME: /usr/bin/chromium
         run: Rscript generar_tabla_alerta.R
 
       - name: Guardar base CSV actualizada en el repo
