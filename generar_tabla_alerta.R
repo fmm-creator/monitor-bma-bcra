@@ -8,6 +8,11 @@ library(stringr)
 library(readr)
 
 
+# Configuración necesaria para que Chromium funcione en servidores Linux (GitHub Actions)
+if (Sys.info()[["sysname"]] == "Linux") {
+  options(chromote.launch.args = c("--no-sandbox", "--disable-dev-shm-usage"))
+}
+
 # 1. Función de descarga y procesamiento
 procesar_bma_bcra <- function() {
   url_bcra <- "https://www.bcra.gob.ar/archivos/Pdfs/PublicacionesEstadisticas/series.xlsm"
@@ -72,10 +77,8 @@ procesar_bma_bcra <- function() {
   return(df_completo)
 }
 
-
-
 # 2. Función de generación de imagen
-generar_imagen_bma <- function(df_bma, ruta_png = "prueba_bma.png") {
+generar_imagen_bma <- function(df_bma, ruta_png = "alerta_bma.png") {
   ultima_fecha <- max(df_bma$fecha, na.rm = TRUE)
   fila_hoy <- df_bma %>% filter(fecha == ultima_fecha)
   
@@ -134,23 +137,14 @@ generar_imagen_bma <- function(df_bma, ruta_png = "prueba_bma.png") {
       mes      = col_mes,
       anio     = col_anio
     ) %>%
-    # Centrar columnas numéricas y alinear conceptos a la izquierda
-    cols_align(
-      align = "center",
-      columns = c(diaria, mes, anio)
-    ) %>%
-    cols_align(
-      align = "left",
-      columns = etiqueta
-    ) %>%
-    # Formato numérico argentino sin decimales
+    cols_align(align = "center", columns = c(diaria, mes, anio)) %>%
+    cols_align(align = "left", columns = etiqueta) %>%
     fmt_number(
       columns = c(diaria, mes, anio),
       decimals = 0,
       sep_mark = ".",
       dec_mark = ","
     ) %>%
-    # Colores condicionales ajustados a enteros
     tab_style(
       style = cell_text(color = "#1B7837", weight = "600"),
       locations = list(
@@ -175,7 +169,6 @@ generar_imagen_bma <- function(df_bma, ruta_png = "prueba_bma.png") {
         cells_body(columns = anio,   rows = round(anio) == 0)
       )
     ) %>%
-    # Destacar la fila de Base Monetaria Total
     tab_style(
       style = list(
         cell_fill(color = "#EEF3FA"),
@@ -183,7 +176,6 @@ generar_imagen_bma <- function(df_bma, ruta_png = "prueba_bma.png") {
       ),
       locations = cells_body(rows = 1)
     ) %>%
-    # Jerarquía tipográfica y limpieza visual
     tab_options(
       table.font.names = "Arial",
       table.font.size = px(13),
@@ -201,9 +193,7 @@ generar_imagen_bma <- function(df_bma, ruta_png = "prueba_bma.png") {
   message("Imagen actualizada en: ", normalizePath(ruta_png))
 }
 
-
-
-# 3. Flujo de automatización: control de novedad, guardado y alerta
+# 3. Flujo principal (sin cerrar RStudio)
 ruta_csv <- "data/bma_diaria.csv"
 ruta_img <- "alerta_bma.png"
 
@@ -217,38 +207,34 @@ ultima_fecha_local <- if (file.exists(ruta_csv)) {
   as.Date("1900-01-01")
 }
 
-# Si no hay fecha nueva, terminamos silenciosamente
-if (ultima_fecha_bcra <= ultima_fecha_local) {
+if (ultima_fecha_bcra > ultima_fecha_local) {
+  dir.create("data", showWarnings = FALSE)
+  write_csv(bma_limpia, ruta_csv)
+  message("Nueva fecha detectada: ", ultima_fecha_bcra, ". Base actualizada.")
+  
+  generar_imagen_bma(bma_limpia, ruta_img)
+  
+  token   <- Sys.getenv("TELEGRAM_TOKEN")
+  chat_id <- Sys.getenv("TELEGRAM_CHAT_ID")
+  
+  if (token != "" && chat_id != "") {
+    resp_tg <- POST(
+      url = paste0("https://api.telegram.org/bot", token, "/sendPhoto"),
+      body = list(
+        chat_id = chat_id,
+        photo = upload_file(ruta_img),
+        caption = paste0("📊 Base Monetaria actualizada al ", format(ultima_fecha_bcra, "%d/%m/%Y"))
+      ),
+      encode = "multipart"
+    )
+    stop_for_status(resp_tg)
+    message("Alerta enviada por Telegram con éxito.")
+  } else {
+    message("Modo local: imagen generada sin envío a Telegram.")
+  }
+} else {
   message("Sin novedades al ", Sys.time(), ". Última fecha BCRA: ", ultima_fecha_bcra)
-  quit(save = "no", status = 0)
 }
-
-# Guardamos la base histórica actualizada (la que luego leerá tu Shiny)
-dir.create("data", showWarnings = FALSE)
-write_csv(bma_limpia, ruta_csv)
-message("Nueva fecha detectada: ", ultima_fecha_bcra, ". Base actualizada.")
-
-# Generamos la tabla en imagen
-generar_imagen_bma(bma_limpia, ruta_img)
-
-# Enviamos la imagen por Telegram
-token   <- Sys.getenv("TELEGRAM_TOKEN")
-chat_id <- Sys.getenv("TELEGRAM_CHAT_ID")
-
-if (token != "" && chat_id != "") {
-  resp_tg <- POST(
-    url = paste0("https://api.telegram.org/bot", token, "/sendPhoto"),
-    body = list(
-      chat_id = chat_id,
-      photo = upload_file(ruta_img),
-      caption = paste0("📊 Base Monetaria actualizada al ", format(ultima_fecha_bcra, "%d/%m/%Y"))
-    ),
-    encode = "multipart"
-  )
-  stop_for_status(resp_tg)
-  message("Alerta enviada por Telegram con éxito.")
-}
-
 
 
 
