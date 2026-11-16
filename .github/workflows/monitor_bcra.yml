@@ -1,0 +1,39 @@
+name: Monitor BMA BCRA
+
+on:
+  schedule:
+    # Corre cada 30 min entre las 17:00 y las 21:30 hora Argentina (20:00 a 00:30 UTC), de lunes a viernes
+    - cron: '0,30 20-23 * * 1-5'
+    - cron: '0 0 * * 2-6'
+  workflow_dispatch: # Permite ejecutarlo manualmente cuando quieras
+
+permissions:
+  contents: write
+
+jobs:
+  actualizar-bma:
+    runs-on: ubuntu-latest
+    container:
+      image: rocker/tidyverse:latest
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Instalar Chrome y paquete gt
+        run: |
+          apt-get update && apt-get install -y chromium
+          Rscript -e 'install.packages(c("gt", "webshot2"), repos = "https://cloud.r-project.org")'
+
+      - name: Ejecutar monitor y enviar alerta
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CHROMOTE_CHROME: /usr/bin/chromium
+        run: Rscript generar_tabla_alerta.R
+
+      - name: Guardar base CSV actualizada en el repo
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add data/bma_diaria.csv
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Actualización BMA $(date +%Y-%m-%d)" && git push)
