@@ -2,8 +2,8 @@ name: Monitor BMA BCRA
 
 on:
   schedule:
-    # Corre cada 30 min entre las 17:00 y las 21:30 hora Argentina (20:00 a 00:30 UTC), de lunes a viernes
-    - cron: '0,30 20-23 * * 1-5'
+    # Corre cada 15 min entre las 16:00 y las 20:45 hora Argentina (19:00 a 23:45 UTC), de lunes a viernes
+    - cron: '0,15,30,45 19-21 * * 1-5'
     - cron: '0 0 * * 2-6'
   workflow_dispatch: # Permite ejecutarlo manualmente cuando quieras
 
