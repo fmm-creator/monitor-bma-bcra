@@ -193,10 +193,51 @@ generar_imagen_bma <- function(df_bma, ruta_png = "alerta_bma.png") {
   message("Imagen actualizada en: ", normalizePath(ruta_png))
 }
 
-# 3. Flujo principal (sin cerrar RStudio)
-ruta_csv <- "data/bma_diaria.csv"
-ruta_img <- "alerta_bma.png"
+# 3. Flujo principal: detección de suscriptores, novedad y envío masivo
+ruta_csv         <- "data/bma_diaria.csv"
+ruta_suscriptores <- "data/suscriptores.csv"
+ruta_img         <- "alerta_bma.png"
 
+token      <- Sys.getenv("TELEGRAM_TOKEN")
+chat_admin <- Sys.getenv("TELEGRAM_CHAT_ID")
+
+# Función para actualizar la lista de usuarios que le dieron /start al bot
+actualizar_suscriptores <- function(token, chat_admin, ruta_suscriptores) {
+  ids_guardados <- if (file.exists(ruta_suscriptores)) {
+    read_csv(ruta_suscriptores, col_types = cols(chat_id = col_character()), show_col_types = FALSE)$chat_id
+  } else {
+    character(0)
+  }
+  
+  # Siempre incluimos tu chat_id principal por seguridad
+  ids_totales <- unique(c(ids_guardados, chat_admin))
+  ids_totales <- ids_totales[ids_totales != ""]
+  
+  if (token != "") {
+    resp_upd <- tryCatch(
+      GET(paste0("https://api.telegram.org/bot", token, "/getUpdates")),
+      error = function(e) NULL
+    )
+    if (!is.null(resp_upd) && status_code(resp_upd) == 200) {
+      contenido <- content(resp_upd, as = "parsed")
+      nuevos_ids <- sapply(contenido$result, function(x) {
+        as.character(x$message$chat$id %||% x$my_chat_member$chat$id %||% NA)
+      })
+      nuevos_ids <- nuevos_ids[!is.na(nuevos_ids)]
+      ids_totales <- unique(c(ids_totales, nuevos_ids))
+    }
+  }
+  
+  dir.create("data", showWarnings = FALSE)
+  write_csv(tibble(chat_id = ids_totales), ruta_suscriptores)
+  return(ids_totales)
+}
+
+# Actualizamos suscriptores en cada corrida (así captura nuevos /start aunque no haya dato nuevo)
+suscriptores <- actualizar_suscriptores(token, chat_admin, ruta_suscriptores)
+message("Suscriptores activos: ", length(suscriptores))
+
+# Revisamos si hay dato nuevo del BCRA
 bma_limpia <- procesar_bma_bcra()
 ultima_fecha_bcra <- max(bma_limpia$fecha, na.rm = TRUE)
 
@@ -208,34 +249,33 @@ ultima_fecha_local <- if (file.exists(ruta_csv)) {
 }
 
 if (ultima_fecha_bcra > ultima_fecha_local) {
-  dir.create("data", showWarnings = FALSE)
   write_csv(bma_limpia, ruta_csv)
   message("Nueva fecha detectada: ", ultima_fecha_bcra, ". Base actualizada.")
   
   generar_imagen_bma(bma_limpia, ruta_img)
   
-  token   <- Sys.getenv("TELEGRAM_TOKEN")
-  chat_id <- Sys.getenv("TELEGRAM_CHAT_ID")
-  
-  if (token != "" && chat_id != "") {
-    resp_tg <- POST(
-      url = paste0("https://api.telegram.org/bot", token, "/sendPhoto"),
-      body = list(
-        chat_id = chat_id,
-        photo = upload_file(ruta_img),
-        caption = paste0("📊 Base Monetaria actualizada al ", format(ultima_fecha_bcra, "%d/%m/%Y"))
-      ),
-      encode = "multipart"
-    )
-    stop_for_status(resp_tg)
-    message("Alerta enviada por Telegram con éxito.")
-  } else {
-    message("Modo local: imagen generada sin envío a Telegram.")
+  if (token != "" && length(suscriptores) > 0) {
+    for (id_destino in suscriptores) {
+      tryCatch({
+        resp_tg <- POST(
+          url = paste0("https://api.telegram.org/bot", token, "/sendPhoto"),
+          body = list(
+            chat_id = id_destino,
+            photo = upload_file(ruta_img),
+            caption = paste0("📊 Base Monetaria actualizada al ", format(ultima_fecha_bcra, "%d/%m/%Y"))
+          ),
+          encode = "multipart"
+        )
+        stop_for_status(resp_tg)
+        message("Enviado con éxito a chat_id: ", id_destino)
+      }, error = function(e) {
+        message("No se pudo enviar a chat_id ", id_destino, ": ", e$message)
+      })
+    }
   }
 } else {
   message("Sin novedades al ", Sys.time(), ". Última fecha BCRA: ", ultima_fecha_bcra)
 }
-
 
 
 
